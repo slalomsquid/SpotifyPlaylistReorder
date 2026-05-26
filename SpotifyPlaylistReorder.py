@@ -20,8 +20,7 @@ def extract_playlist_id(url: str) -> str:
 
 
 def fetch_playlist_data(playlist_id: str, bearer_token: str, client_token: str) -> Dict:
-    # url = "https://api-partner.spotify.com/pathfinder/v2/query"
-    url = "https://api-partner.spotify.com/pathfinder/v1/query"
+    url = "https://api-partner.spotify.com/pathfinder/v2/query"
     
     headers = {
         "accept": "application/json",
