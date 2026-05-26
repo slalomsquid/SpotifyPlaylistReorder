@@ -20,7 +20,8 @@ def extract_playlist_id(url: str) -> str:
 
 
 def fetch_playlist_data(playlist_id: str, bearer_token: str, client_token: str) -> Dict:
-    url = "https://api-partner.spotify.com/pathfinder/v2/query"
+    # url = "https://api-partner.spotify.com/pathfinder/v2/query"
+    url = "https://api-partner.spotify.com/pathfinder/v1/query"
     
     headers = {
         "accept": "application/json",
@@ -242,6 +243,60 @@ def generate_move_payload(playlist_id: str, uid: str, move_type: str, from_uid: 
     }
 
 
+def save_shell_script(playlist_id: str, sorted_tracks: List[Dict], bearer_token: str, client_token: str, original_tracks: List[Dict], filename: str = "move_tracks.sh"):
+    move_steps = build_move_steps(sorted_tracks, original_tracks)
+
+    with open(filename, "w", encoding="utf-8") as f:
+        # headers
+        f.write("#!/bin/bash\n\n")
+        f.write("# SpotifyPlaylistReorder\n")
+        f.write("# https://github.com/ilovecats4606/SpotifyPlaylistReorder\n")
+        f.write(f'AUTHORIZATION="{bearer_token}"\n')
+        f.write(f'CLIENT_TOKEN="{client_token}"\n')
+        f.write('BASE_URI="https://api-partner.spotify.com/pathfinder/v2/query"\n\n')
+        
+        f.write('sleep 0.5\n\n')
+
+        for index, step in enumerate(move_steps):
+            track = step["track"]
+            move_type = step["move_type"]
+            from_uid = step["from_uid"]
+            payload = generate_move_payload(playlist_id, track["uid"], move_type, from_uid)
+            artist_display = track["artist_display"]
+            album_name = track.get("album", "Unknown Album")
+            track_name = track["name"]
+            payload_json = json.dumps(payload, ensure_ascii=False)
+
+            f.write(f"\n# Move {index+1}: {artist_display} - {album_name} - {track_name}\n")
+            
+            status = f"Moving track {index+1}/{len(move_steps)}: {artist_display} | {album_name} | {track_name}"
+            status = status.replace('"', '\\"') # prevents punctuation errors in bash
+            f.write(f'echo "{status}"\n')
+            
+            escaped_payload = payload_json.replace('"', '\\"')
+            f.write(f'PAYLOAD="{escaped_payload}"\n\n')
+            
+            f.write('if response=$(curl -s -X POST "$BASE_URI" \\\n')
+            f.write('    -H "accept: application/json" \\\n')
+            f.write('    -H "authorization: Bearer $AUTHORIZATION" \\\n')
+            f.write('    -H "client-token: $CLIENT_TOKEN" \\\n')
+            f.write('    -H "content-type: application/json;charset=UTF-8" \\\n')
+            f.write('    -H "origin: https://open.spotify.com" \\\n')
+            f.write('    -d "$PAYLOAD"); then\n')
+            
+            # Green ansi text on success (\033[0;32m)
+            f.write('    printf "\\033[0;32m[OK] Track moved successfully\\033[0m\\n"\n')
+            f.write('else\n')
+            # Red ansi text on failure (\033[0;31m)
+            f.write('    printf "\\033[0;31m[ERROR] Failed to execute curl\\033[0m\\n"\n')
+            f.write('fi\n\n')
+            
+            # Delay between to prevent rate limiting
+            f.write('sleep 0.5\n')
+
+    print(f"Bash script saved to: {filename}")
+
+
 def save_powershell_script(playlist_id: str, sorted_tracks: List[Dict], bearer_token: str, client_token: str, original_tracks: List[Dict], filename: str = "move_tracks.ps1"):
     move_steps = build_move_steps(sorted_tracks, original_tracks)
 
@@ -335,6 +390,8 @@ def prompt_for_tokens() -> Tuple[str, str]:
     if not client_token:
         raise Exception("Client token is required")
     
+    print(bearer_token, client_token)
+    
     return bearer_token, client_token
 
 
@@ -371,7 +428,11 @@ def main():
         print_comparison(original_tracks, sorted_tracks)
         
         print("\n" + "="*100)
-        save_powershell_script(playlist_id, sorted_tracks, bearer_token, client_token, original_tracks)
+        # check platform
+        if sys.platform == "win32":
+            save_powershell_script(playlist_id, sorted_tracks, bearer_token, client_token, original_tracks)
+        else:
+            save_shell_script(playlist_id, sorted_tracks, bearer_token, client_token, original_tracks)
         save_json_requests(playlist_id, sorted_tracks, original_tracks)
         print("="*100)
         
@@ -380,18 +441,24 @@ def main():
             import subprocess
             print("\nStarting playlist reordering...")
             print("(You may be prompted to allow script execution)\n")
-            result = subprocess.run(
-                ["powershell", "-ExecutionPolicy", "Bypass", "-File", "move_tracks.ps1"],
-                cwd="."
-            )
+            if sys.platform == "win32":
+                result = subprocess.run(
+                    ["powershell", "-ExecutionPolicy", "Bypass", "-File", "move_tracks.ps1"],
+                    cwd="."
+                )
+            else:
+                result = subprocess.run(["bash", "move_tracks.sh"], cwd=".")
             if result.returncode == 0:
                 print("\nPlaylist reordering complete!")
             else:
                 print("\nPlaylist reordering had some issues. Check the output above.")
         else:
             print("\nTo run the script later, execute:")
-            print("  Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process")
-            print("  .\\move_tracks.ps1")
+            if sys.platform == "win32":
+                print("  Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process")
+                print("  .\\move_tracks.ps1")
+            else:
+                print("  bash move_tracks.sh")
     
     except Exception as e:
         print(f"\nERROR: {e}", file=sys.stderr)
